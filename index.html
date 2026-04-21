@@ -3,24 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Magic Particles - Gesture Shapes</title>
+  <title>Magic Particles - Bright Camera Version</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
     body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-    #video { position: fixed; transform: scaleX(-1); opacity: 0.1; width: 100%; height: 100%; object-fit: cover; }
+    
+    /* PENGATURAN KAMERA - DIBUAT LEBIH TERANG */
+    #video { 
+      position: fixed; 
+      transform: scaleX(-1); 
+      width: 100%; 
+      height: 100%; 
+      object-fit: cover;
+      opacity: 0.5; /* Lebih jelas terlihat */
+      filter: brightness(1.6) contrast(1.2) saturate(1.2); /* Kamera jauh lebih terang */
+    }
+    
     canvas { position: absolute; top: 0; left: 0; z-index: 10; }
+    
     .hud {
       position: absolute; top: 20px; left: 20px; z-index: 20;
-      color: #0ff; font-family: monospace; background: rgba(0,0,0,0.5);
-      padding: 10px; border-radius: 5px; pointer-events: none;
+      color: #0ff; font-family: monospace; background: rgba(0,0,0,0.6);
+      padding: 12px; border-radius: 8px; pointer-events: none;
+      border: 1px solid rgba(0, 255, 255, 0.3);
     }
   </style>
 </head>
 <body>
   <div class="hud">
-    JARI TERDETEKSI: <span id="jCount">0</span> | BENTUK: <span id="bName">NONE</span>
+    >> SYSTEM_ACTIVE<br>
+    JARI: <span id="jCount">0</span><br>
+    BENTUK: <span id="bName">IDLE</span>
   </div>
   <video id="video" playsinline></video>
 
@@ -33,7 +48,7 @@
     let lastExplosion = 0;
     const totalParticles = 1000;
 
-    // --- MEDIAPIPE ---
+    // --- LOGIKA MEDIAPIPE ---
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6 });
 
@@ -43,17 +58,18 @@
         let lm = results.multiHandLandmarks[0];
         targetPos.set((1 - lm[8].x) * width, lm[8].y * height);
         
-        // Hitung Jari
+        // Hitung Jari Secara Akurat
         let count = 0;
-        if (lm[8].y < lm[6].y) count++;  // Telunjuk
-        if (lm[12].y < lm[10].y) count++; // Tengah
-        if (lm[16].y < lm[14].y) count++; // Manis
-        if (lm[20].y < lm[18].y) count++; // Kelingking
-        if (dist(lm[4].x, lm[4].y, lm[3].x, lm[3].y) > 0.05) count++; // Jempol
+        if (lm[8].y < lm[6].y) count++;  
+        if (lm[12].y < lm[10].y) count++; 
+        if (lm[16].y < lm[14].y) count++; 
+        if (lm[20].y < lm[18].y) count++; 
+        // Deteksi jempol berdasarkan jarak ke telapak
+        if (dist(lm[4].x, lm[4].y, lm[3].x, lm[3].y) > 0.04) count++; 
         
         fingerCount = count;
 
-        // Logika Ledakan
+        // Logika Ledakan (Buka tangan mendadak)
         let isOpen = (count >= 4);
         let isClosed = (count <= 1);
         if (wasClosed && isOpen && Date.now() - lastExplosion > 1000) {
@@ -76,11 +92,11 @@
     function explode() {
       particles.forEach(p => {
         p.vel.add(p5.Vector.random2D().mult(random(30, 50)));
-        p.tCol = color(random(255), 255, 255);
+        p.tCol = color(random(100, 255), random(100, 255), 255);
       });
     }
 
-    // --- P5.JS ---
+    // --- VISUAL P5.JS ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
       targetPos = createVector(width/2, height/2);
@@ -90,17 +106,18 @@
 
     function draw() {
       clear();
-      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.15);
-      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.15);
+      // Smooth movement tracking
+      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.18);
+      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.18);
 
-      let bText = "DRIFT";
+      let bText = "DRIFTING";
       particles.forEach(p => {
         if (handInFrame) {
           if (fingerCount === 1) { p.seek(smoothPos); bText = "POINT"; }
           else if (fingerCount === 2) { p.shapeLove(smoothPos); bText = "LOVE"; }
           else if (fingerCount === 3) { p.shapePoly(smoothPos, 3, 200); bText = "TRIANGLE"; }
           else if (fingerCount === 4) { p.shapePoly(smoothPos, 4, 200); bText = "SQUARE"; }
-          else if (fingerCount === 5) { p.shapePoly(smoothPos, 50, 180); bText = "CIRCLE"; }
+          else if (fingerCount === 5) { p.shapePoly(smoothPos, 60, 180); bText = "CIRCLE"; }
           else { p.drift(); }
         } else { p.drift(); }
         p.update();
@@ -117,6 +134,8 @@
         this.acc = createVector();
         this.clr = color(255);
         this.tCol = null;
+        this.maxS = 20;
+        this.maxF = 0.85;
       }
 
       shapeLove(c) {
@@ -124,40 +143,38 @@
         let x = c.x + 16 * 16 * pow(sin(a), 3);
         let y = c.y - (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a)) * 13;
         this.seek(createVector(x, y));
-        this.clr = color(255, 50, 150);
+        this.clr = color(255, 80, 150);
       }
 
       shapePoly(c, sides, r) {
         let angle = TWO_PI / sides;
         let segment = floor(map(this.i, 0, totalParticles, 0, sides));
         let pct = (this.i % (totalParticles/sides)) / (totalParticles/sides);
-        
         let a1 = segment * angle - HALF_PI;
         let a2 = (segment + 1) * angle - HALF_PI;
-        
         let v1 = createVector(c.x + cos(a1)*r, c.y + sin(a1)*r);
         let v2 = createVector(c.x + cos(a2)*r, c.y + sin(a2)*r);
-        
         this.seek(p5.Vector.lerp(v1, v2, pct));
-        this.clr = (sides === 3) ? color(255, 255, 0) : (sides === 4) ? color(0, 255, 255) : color(0, 255, 100);
+        this.clr = (sides === 3) ? color(255, 220, 0) : (sides === 4) ? color(0, 255, 255) : color(100, 255, 100);
       }
 
       seek(t) {
         let d = p5.Vector.sub(t, this.pos);
-        let s = map(min(d.mag(), 100), 0, 100, 0, 18);
-        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(0.8));
+        let m = d.mag();
+        let s = map(min(m, 100), 0, 100, 0, this.maxS);
+        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(this.maxF));
       }
 
       drift() {
         this.acc.add(p5.Vector.random2D().mult(0.2));
-        this.clr = color(200, 150);
+        this.clr = color(200, 200, 200, 150);
       }
 
       update() {
-        this.vel.add(this.acc).limit(18);
+        this.vel.add(this.acc).limit(this.maxS);
         this.pos.add(this.vel);
         this.acc.mult(0);
-        this.vel.mult(0.92);
+        this.vel.mult(0.93);
       }
 
       show() {
@@ -167,6 +184,7 @@
         this.tCol = null;
       }
     }
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
   </script>
 </body>
 </html>
