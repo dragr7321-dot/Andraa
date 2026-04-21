@@ -3,26 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Magic Hand Particles</title>
+  <title>Magic Hand - Particle Control</title>
+  
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+
   <style>
-    body { margin: 0; overflow: hidden; background: #000; }
-    canvas { display: block; }
-    #video { display: none; }
+    body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+    #video { display: none; } /* Sembunyikan video asli */
+    .info { 
+      position: absolute; bottom: 20px; width: 100%; text-align: center; 
+      color: rgba(255,255,255,0.5); font-size: 12px; pointer-events: none;
+    }
   </style>
 </head>
 <body>
+
   <video id="video" playsinline></video>
+  <div class="info">Dekatkan telunjuk & jempol untuk Love | Jentikkan untuk Ledakan</div>
 
   <script>
     let handLandmarks = null;
     let particles = [];
-    const numParticles = 800; // Jumlah butiran debu
+    const numParticles = 600; 
     let isSarangeo = false;
+    let prevDist = 1;
 
-    // 1. Setup MediaPipe Hands
+    // --- 1. SETUP MEDIAPIPE HANDS ---
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -30,14 +38,14 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minDetectionConfidence: 0.8,
+      minTrackingConfidence: 0.8
     });
 
     hands.onResults(results => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         handLandmarks = results.multiHandLandmarks[0];
-        checkGesture(handLandmarks);
+        detectGestures(handLandmarks);
       } else {
         handLandmarks = null;
       }
@@ -49,18 +57,36 @@
     });
     camera.start();
 
-    // 2. Logika Deteksi Gesture (Sederhana)
-    function checkGesture(landmarks) {
-      // Deteksi Sarangeo sederhana (Ibu jari dan Telunjuk berdekatan)
-      let thumbTip = landmarks[4];
-      let indexTip = landmarks[8];
-      let dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-      
-      // Jika jarak ujung jempol dan telunjuk sangat dekat
-      isSarangeo = dist < 0.05;
+    // --- 2. LOGIKA GESTURE (LOVE & LEDAKAN) ---
+    function detectGestures(lm) {
+      let thumbTip = lm[4];
+      let indexTip = lm[8];
+      let dist = dist3D(thumbTip, indexTip);
+
+      // Cek Sarangeo (Jarak sangat dekat)
+      isSarangeo = dist < 0.04;
+
+      // Cek Jentikan (Perubahan jarak mendadak dari rapat ke terbuka)
+      if (prevDist < 0.04 && dist > 0.1) {
+        explodeParticles((1 - indexTip.x) * width, indexTip.y * height);
+      }
+      prevDist = dist;
     }
 
-    // 3. Setup p5.js untuk Visual
+    function dist3D(p1, p2) {
+      return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+    }
+
+    function explodeParticles(x, y) {
+      particles.forEach(p => {
+        let force = p5.Vector.random2D();
+        force.mult(random(10, 20));
+        p.acc.add(force);
+        p.color = color(random(255), random(255), random(255)); // Warna-warni ledakan
+      });
+    }
+
+    // --- 3. P5.JS VISUAL ENGINE ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
       for (let i = 0; i < numParticles; i++) {
@@ -69,18 +95,24 @@
     }
 
     function draw() {
-      background(0, 50); // Efek trail (jejak)
+      background(0, 40); // Trail effect
       
       if (handLandmarks) {
-        let tx = (1 - handLandmarks[8].x) * width; // Balik mirror
+        let tx = (1 - handLandmarks[8].x) * width; // Mirroring
         let ty = handLandmarks[8].y * height;
 
         particles.forEach(p => {
           if (isSarangeo) {
-            p.followHeart(tx, ty); // Jika sarangeo, bentuk LOVE
+            p.followHeart(tx, ty);
           } else {
-            p.followHand(tx, ty); // Jika biasa, ikuti telunjuk
+            p.followHand(tx, ty);
           }
+          p.update();
+          p.show();
+        });
+      } else {
+        // Jika tangan hilang, partikel melayang acak
+        particles.forEach(p => {
           p.update();
           p.show();
         });
@@ -92,45 +124,57 @@
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
         this.acc = createVector();
-        this.color = color(random(100, 255), random(100, 255), 255);
+        this.color = color(200, 230, 255);
+        this.maxSpeed = random(3, 7);
       }
 
       followHand(tx, ty) {
         let target = createVector(tx, ty);
         let force = p5.Vector.sub(target, this.pos);
-        force.setMag(0.5);
+        let d = force.mag();
+        if (d < 100) {
+          force.setMag(-1); // Efek menolak sedikit jika terlalu dekat
+        } else {
+          force.setMag(0.6);
+        }
         this.acc.add(force);
+        this.color = color(150, 200, 255);
       }
 
       followHeart(tx, ty) {
-        // Persamaan Matematika Hati (Heart Shape)
         let angle = random(TWO_PI);
-        let r = 10;
+        let r = 12; // Ukuran hati
         let hx = tx + r * 16 * pow(sin(angle), 3);
         let hy = ty - r * (13 * cos(angle) - 5 * cos(2 * angle) - 2 * cos(3 * angle) - cos(4 * angle));
         
         let target = createVector(hx, hy);
         let force = p5.Vector.sub(target, this.pos);
-        force.setMag(0.8);
+        force.setMag(1.2);
         this.acc.add(force);
-        this.color = color(255, 105, 180); // Ubah jadi pink
+        this.color = color(255, 50, 150); // Pink terang
       }
 
       update() {
         this.vel.add(this.acc);
-        this.vel.limit(5);
+        this.vel.limit(this.maxSpeed);
         this.pos.add(this.vel);
-        this.acc.mult(0.9); // Friction
+        this.acc.mult(0.9);
+        
+        // Bounce off walls
+        if (this.pos.x < 0 || this.pos.x > width) this.vel.x *= -1;
+        if (this.pos.y < 0 || this.pos.y > height) this.vel.y *= -1;
       }
 
       show() {
         stroke(this.color);
-        strokeWeight(2);
+        strokeWeight(random(1, 4));
         point(this.pos.x, this.pos.y);
       }
     }
 
-    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
   </script>
 </body>
 </html>
