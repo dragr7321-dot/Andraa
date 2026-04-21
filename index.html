@@ -3,95 +3,101 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Magic Particles - Ultra Smooth Final</title>
+  <title>Magic Particles - Categorized Controls</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
-    #video { position: fixed; transform: scaleX(-1); opacity: 0.3; width: 100%; height: 100%; object-fit: cover; }
+    body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    #video { position: fixed; transform: scaleX(-1); opacity: 0.2; width: 100%; height: 100%; object-fit: cover; }
     canvas { position: absolute; top: 0; left: 0; z-index: 10; }
+    
+    /* Panel Kontrol */
+    .ui-container {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      z-index: 100; width: 95%; display: flex; flex-direction: column; gap: 10px;
+    }
+
+    .category-group {
+      display: flex; gap: 8px; justify-content: center; background: rgba(255, 255, 255, 0.1);
+      padding: 8px; border-radius: 12px; backdrop-filter: blur(10px);
+    }
+
+    .label {
+      position: absolute; top: -18px; left: 10px; font-size: 10px; color: #0ff; 
+      letter-spacing: 1px; font-weight: bold; text-transform: uppercase;
+    }
+
+    .group-box { position: relative; border: 1px solid rgba(0, 255, 255, 0.3); border-radius: 12px; }
+
+    button {
+      flex: 1; padding: 10px 5px; border: none; background: rgba(0, 255, 255, 0.1);
+      color: #fff; border-radius: 6px; font-size: 11px; font-weight: bold;
+      cursor: pointer; transition: 0.2s; min-width: 60px;
+    }
+    
+    button.active { background: #0ff; color: #000; box-shadow: 0 0 10px #0ff; }
+    button.special { border: 1px solid #f0f; color: #f0f; }
+
     .hud {
       position: absolute; top: 20px; left: 20px; z-index: 20;
-      color: #0ff; font-family: 'Courier New', monospace; font-size: 13px;
-      background: rgba(0, 30, 30, 0.6); padding: 15px; border-left: 4px solid #0ff;
-      pointer-events: none; text-shadow: 0 0 5px #0ff;
+      color: #0ff; font-family: monospace; pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <div class="hud">
-    <div>>> MAGIC_SYSTEM_v3.0_FINAL</div>
-    <div>GESTURE: <span id="gStatus">IDLE</span></div>
-    <div>NUMBER : <span id="nStatus">0</span></div>
-    <div>FOLLOW : <span id="fStatus">OFF</span></div>
-    <div>FPS    : <span id="fpsStatus">0</span></div>
+  <div class="hud">MODE: <span id="modeName">IDLE</span> | FPS: <span id="fps">0</span></div>
+
+  <div class="ui-container">
+    <div class="group-box">
+      <span class="label">Bentuk</span>
+      <div class="category-group">
+        <button onclick="setMode('LOVE')">LOVE</button>
+        <button onclick="setMode('CIRCLE')">CIRCLE</button>
+        <button onclick="setMode('TRIANGLE')">TRIANGLE</button>
+        <button class="special" onclick="triggerExplosion()">BOOM!</button>
+      </div>
+    </div>
+
+    <div class="group-box">
+      <span class="label">Kendali</span>
+      <div class="category-group">
+        <button id="btnFollow" onclick="setMode('FOLLOW')">FOLLOW</button>
+        <button id="btnNumber" onclick="setMode('NUMBER')">ANGKA</button>
+        <button onclick="setMode('IDLE')" class="active">OFF</button>
+      </div>
+    </div>
   </div>
+
   <video id="video" playsinline></video>
 
   <script>
     let particles = [];
-    let isFollowActive = false;
-    let lastToggleTime = 0;
-    let lastExplosionTime = 0;
-    let wasClosed = false;
-    let currentGesture = "IDLE";
-    let currentNumber = 0;
+    let currentMode = 'IDLE';
     let targetPos, smoothPos;
     let handInFrame = false;
+    let currentNumber = 0;
     const totalParticles = 1200;
 
-    // --- 1. MEDIAPIPE LOGIC (SANGAT CEPAT) ---
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6 });
 
     hands.onResults(results => {
-      let fingerCount = 0;
-      handInFrame = (results.multiHandLandmarks && results.multiHandLandmarks.length > 0);
-      currentGesture = "IDLE";
-
-      if (handInFrame) {
-        results.multiHandLandmarks.forEach((lm, index) => {
-          // Hitung jari naik
-          if (lm[8].y < lm[6].y) fingerCount++;
-          if (lm[12].y < lm[10].y) fingerCount++;
-          if (lm[16].y < lm[14].y) fingerCount++;
-          if (lm[20].y < lm[18].y) fingerCount++;
-          let isRight = results.multiHandedness[index].label === 'Right';
-          if (isRight ? lm[4].x < lm[3].x : lm[4].x > lm[3].x) fingerCount++;
-
-          // Jempol (👍) Toggle
-          let thumbOnly = (lm[4].y < lm[3].y && lm[8].y > lm[6].y && lm[12].y > lm[10].y);
-          if (thumbOnly && Date.now() - lastToggleTime > 800) {
-            isFollowActive = !isFollowActive;
-            lastToggleTime = Date.now();
-            document.getElementById('fStatus').innerText = isFollowActive ? "ON" : "OFF";
-          }
-
-          // Sarangeo
-          let dTI = dist(lm[4].x, lm[4].y, lm[8].x, lm[8].y);
-          if (dTI < 0.06 && lm[12].y > lm[10].y) currentGesture = "LOVE";
-
-          // Mengepal & Ledakan
-          let isClosed = (lm[8].y > lm[6].y && lm[12].y > lm[10].y && lm[16].y > lm[14].y);
-          let isOpen = (lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y < lm[14].y);
-          
-          if (isClosed && currentGesture !== "LOVE") currentGesture = "CLOSED";
-          if (wasClosed && isOpen && Date.now() - lastExplosionTime > 1000) {
-            triggerExplosion();
-            lastExplosionTime = Date.now();
-          }
-          if (index === 0) wasClosed = isClosed;
-          if (index === 0) targetPos.set((1 - lm[8].x) * width, lm[8].y * height);
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        handInFrame = true;
+        const lm = results.multiHandLandmarks[0];
+        targetPos.set((1 - lm[8].x) * width, lm[8].y * height);
+        
+        let count = 0;
+        results.multiHandLandmarks.forEach(hand => {
+           if (hand[8].y < hand[6].y) count++;
+           if (hand[12].y < hand[10].y) count++;
+           if (hand[16].y < hand[14].y) count++;
+           if (hand[20].y < hand[18].y) count++;
+           if (hand[4].y < hand[3].y) count++;
         });
-        currentNumber = fingerCount;
-        if (currentGesture === "IDLE" && currentNumber > 0) currentGesture = "NUMBER";
-      } else {
-        currentNumber = 0;
-        currentGesture = "LOST";
-      }
-      document.getElementById('gStatus').innerText = currentGesture;
-      document.getElementById('nStatus').innerText = currentNumber;
+        currentNumber = count;
+      } else { handInFrame = false; }
     });
 
     new Camera(document.getElementById('video'), {
@@ -99,7 +105,24 @@
       width: 480, height: 360
     }).start();
 
-    // --- 2. P5.JS VISUAL ENGINE ---
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('modeName').innerText = mode;
+      document.querySelectorAll('button').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.innerText === mode || (btn.id === 'btnFollow' && mode === 'FOLLOW') || (btn.id === 'btnNumber' && mode === 'NUMBER')) {
+          btn.classList.add('active');
+        }
+      });
+    }
+
+    function triggerExplosion() {
+      particles.forEach(p => {
+        p.vel.add(p5.Vector.random2D().mult(random(30, 60)));
+        p.tColor = color(random(255), random(255), 255);
+      });
+    }
+
     function setup() {
       createCanvas(windowWidth, windowHeight);
       targetPos = createVector(width/2, height/2);
@@ -109,30 +132,20 @@
 
     function draw() {
       clear();
-      document.getElementById('fpsStatus').innerText = floor(frameRate());
-      
-      // Interpolasi agar gerakan tidak patah
+      document.getElementById('fps').innerText = floor(frameRate());
       smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.2);
       smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.2);
 
-      let base = isFollowActive ? smoothPos : createVector(width/2, height/2);
-
       particles.forEach(p => {
-        if (handInFrame) {
-          if (currentGesture === "LOVE") p.shapeHeart(base);
-          else if (currentGesture === "CLOSED") p.shapeCircle(base);
-          else if (currentGesture === "NUMBER") p.shapeDigit(currentNumber, base);
-          else p.drift();
-        } else { p.drift(); }
+        let base = handInFrame ? smoothPos : createVector(width/2, height/2);
+        if (currentMode === 'LOVE') p.shapeHeart(base);
+        else if (currentMode === 'CIRCLE') p.shapeCircle(base);
+        else if (currentMode === 'TRIANGLE') p.shapeTriangle(base);
+        else if (currentMode === 'FOLLOW') p.seek(base);
+        else if (currentMode === 'NUMBER') p.shapeDigit(currentNumber, base);
+        else p.drift();
         p.update();
         p.show();
-      });
-    }
-
-    function triggerExplosion() {
-      particles.forEach(p => {
-        p.vel.add(p5.Vector.random2D().mult(random(25, 45)));
-        p.tColor = color(random(255), random(255), 255);
       });
     }
 
@@ -142,64 +155,76 @@
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
         this.acc = createVector();
-        this.maxS = random(8, 15);
+        this.maxS = 16;
         this.maxF = 0.8;
         this.clr = color(255);
         this.tColor = null;
-        this.off = p5.Vector.random2D().mult(random(5, 25));
       }
 
       shapeHeart(c) {
         let a = map(this.i, 0, totalParticles, 0, TWO_PI);
-        let r = 16;
-        let x = c.x + r * (16 * pow(sin(a), 3));
-        let y = c.y - r * (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a));
+        let x = c.x + 16 * 16 * pow(sin(a), 3);
+        let y = c.y - (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a)) * 13;
         this.seek(createVector(x, y));
-        this.clr = color(255, 100, 150);
+        this.clr = color(255, 50, 150);
       }
 
       shapeCircle(c) {
         let a = map(this.i, 0, totalParticles, 0, TWO_PI);
         this.seek(createVector(c.x + cos(a)*180, c.y + sin(a)*180));
-        this.clr = color(100, 255, 150);
+        this.clr = color(0, 255, 150);
+      }
+
+      shapeTriangle(c) {
+        let side = 400;
+        let h = side * (sqrt(3)/2);
+        let p1 = createVector(c.x, c.y - h/2);
+        let p2 = createVector(c.x - side/2, c.y + h/2);
+        let p3 = createVector(c.x + side/2, c.y + h/2);
+        let target;
+        let segment = floor(map(this.i, 0, totalParticles, 0, 3));
+        let pct = (this.i % (totalParticles/3)) / (totalParticles/3);
+        if(segment === 0) target = p5.Vector.lerp(p1, p2, pct);
+        else if(segment === 1) target = p5.Vector.lerp(p2, p3, pct);
+        else target = p5.Vector.lerp(p3, p1, pct);
+        this.seek(target);
+        this.clr = color(255, 255, 0);
       }
 
       shapeDigit(n, c) {
-        let pIndex = floor(this.i / (totalParticles / 15));
-        let r = floor(pIndex / 3);
-        let cl = pIndex % 3;
+        let pIdx = floor(this.i / (totalParticles / 15));
+        let r = floor(pIdx / 3); let cl = pIdx % 3;
         const d = [[],[0,1,0,0,1,0,0,1,0,0,1,0,0,1,0],[1,1,1,0,0,1,1,1,1,1,0,0,1,1,1],[1,1,1,0,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,0,1,1,1,1,0,0,1,0,0,1],[1,1,1,1,0,0,1,1,1,0,0,1,1,1],[1,1,1,1,0,0,1,1,1,1,0,1,1,1],[1,1,1,0,0,1,0,0,1,0,0,1,0,0,1],[1,1,1,1,0,1,1,1,1,1,0,1,1,1],[1,1,1,1,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1]];
         let g = d[n];
-        let target;
+        let t;
         if (g && g[r * 3 + cl] === 1) {
-          let s = 50;
-          target = createVector(c.x + (cl-1)*s + (this.i%10-5), c.y + (r-2)*s + (this.i%8-4));
+          t = createVector(c.x + (cl-1)*55 + (this.i%10-5), c.y + (r-2)*55 + (this.i%8-4));
           this.clr = color(0, 255, 255);
         } else {
           let a = map(this.i, 0, totalParticles, 0, TWO_PI);
-          target = createVector(c.x + cos(a)*220, c.y + sin(a)*220);
-          this.clr = color(50, 100, 150, 150);
+          t = createVector(c.x + cos(a)*250, c.y + sin(a)*250);
+          this.clr = color(100, 100, 255, 50);
         }
-        this.seek(target, 0.45); // Force lebih rendah untuk angka agar smooth
+        this.seek(t, 0.5);
       }
 
       seek(t, f) {
-        let d = p5.Vector.sub(t, this.pos);
-        let m = d.mag();
-        let s = (m < 150) ? map(m, 0, 150, 0, this.maxS) : this.maxS;
-        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(f || this.maxF));
+        let desired = p5.Vector.sub(t, this.pos);
+        let m = desired.mag();
+        let s = (m < 100) ? map(m, 0, 100, 0, this.maxS) : this.maxS;
+        this.acc.add(p5.Vector.sub(desired.setMag(s), this.vel).limit(f || this.maxF));
       }
 
       drift() {
         this.acc.add(p5.Vector.random2D().mult(0.2));
-        this.clr = color(180, 180, 180, 150);
+        this.clr = color(255, 255, 255, 100);
       }
 
       update() {
-        this.vel.add(this.acc);
+        this.vel.add(this.acc).limit(this.maxS);
         this.pos.add(this.vel);
         this.acc.mult(0);
-        this.vel.mult(0.93);
+        this.vel.mult(0.92);
       }
 
       show() {
@@ -209,7 +234,6 @@
         this.tColor = null;
       }
     }
-    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
   </script>
 </body>
 </html>
