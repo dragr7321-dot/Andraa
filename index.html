@@ -3,101 +3,69 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Magic Particles - Categorized Controls</title>
+  <title>Magic Particles - Gesture Shapes</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-    #video { position: fixed; transform: scaleX(-1); opacity: 0.2; width: 100%; height: 100%; object-fit: cover; }
+    body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+    #video { position: fixed; transform: scaleX(-1); opacity: 0.1; width: 100%; height: 100%; object-fit: cover; }
     canvas { position: absolute; top: 0; left: 0; z-index: 10; }
-    
-    /* Panel Kontrol */
-    .ui-container {
-      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-      z-index: 100; width: 95%; display: flex; flex-direction: column; gap: 10px;
-    }
-
-    .category-group {
-      display: flex; gap: 8px; justify-content: center; background: rgba(255, 255, 255, 0.1);
-      padding: 8px; border-radius: 12px; backdrop-filter: blur(10px);
-    }
-
-    .label {
-      position: absolute; top: -18px; left: 10px; font-size: 10px; color: #0ff; 
-      letter-spacing: 1px; font-weight: bold; text-transform: uppercase;
-    }
-
-    .group-box { position: relative; border: 1px solid rgba(0, 255, 255, 0.3); border-radius: 12px; }
-
-    button {
-      flex: 1; padding: 10px 5px; border: none; background: rgba(0, 255, 255, 0.1);
-      color: #fff; border-radius: 6px; font-size: 11px; font-weight: bold;
-      cursor: pointer; transition: 0.2s; min-width: 60px;
-    }
-    
-    button.active { background: #0ff; color: #000; box-shadow: 0 0 10px #0ff; }
-    button.special { border: 1px solid #f0f; color: #f0f; }
-
     .hud {
       position: absolute; top: 20px; left: 20px; z-index: 20;
-      color: #0ff; font-family: monospace; pointer-events: none;
+      color: #0ff; font-family: monospace; background: rgba(0,0,0,0.5);
+      padding: 10px; border-radius: 5px; pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <div class="hud">MODE: <span id="modeName">IDLE</span> | FPS: <span id="fps">0</span></div>
-
-  <div class="ui-container">
-    <div class="group-box">
-      <span class="label">Bentuk</span>
-      <div class="category-group">
-        <button onclick="setMode('LOVE')">LOVE</button>
-        <button onclick="setMode('CIRCLE')">CIRCLE</button>
-        <button onclick="setMode('TRIANGLE')">TRIANGLE</button>
-        <button class="special" onclick="triggerExplosion()">BOOM!</button>
-      </div>
-    </div>
-
-    <div class="group-box">
-      <span class="label">Kendali</span>
-      <div class="category-group">
-        <button id="btnFollow" onclick="setMode('FOLLOW')">FOLLOW</button>
-        <button id="btnNumber" onclick="setMode('NUMBER')">ANGKA</button>
-        <button onclick="setMode('IDLE')" class="active">OFF</button>
-      </div>
-    </div>
+  <div class="hud">
+    JARI TERDETEKSI: <span id="jCount">0</span> | BENTUK: <span id="bName">NONE</span>
   </div>
-
   <video id="video" playsinline></video>
 
   <script>
     let particles = [];
-    let currentMode = 'IDLE';
     let targetPos, smoothPos;
     let handInFrame = false;
-    let currentNumber = 0;
-    const totalParticles = 1200;
+    let fingerCount = 0;
+    let wasClosed = false;
+    let lastExplosion = 0;
+    const totalParticles = 1000;
 
+    // --- MEDIAPIPE ---
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6 });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6 });
 
     hands.onResults(results => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         handInFrame = true;
-        const lm = results.multiHandLandmarks[0];
+        let lm = results.multiHandLandmarks[0];
         targetPos.set((1 - lm[8].x) * width, lm[8].y * height);
         
+        // Hitung Jari
         let count = 0;
-        results.multiHandLandmarks.forEach(hand => {
-           if (hand[8].y < hand[6].y) count++;
-           if (hand[12].y < hand[10].y) count++;
-           if (hand[16].y < hand[14].y) count++;
-           if (hand[20].y < hand[18].y) count++;
-           if (hand[4].y < hand[3].y) count++;
-        });
-        currentNumber = count;
-      } else { handInFrame = false; }
+        if (lm[8].y < lm[6].y) count++;  // Telunjuk
+        if (lm[12].y < lm[10].y) count++; // Tengah
+        if (lm[16].y < lm[14].y) count++; // Manis
+        if (lm[20].y < lm[18].y) count++; // Kelingking
+        if (dist(lm[4].x, lm[4].y, lm[3].x, lm[3].y) > 0.05) count++; // Jempol
+        
+        fingerCount = count;
+
+        // Logika Ledakan
+        let isOpen = (count >= 4);
+        let isClosed = (count <= 1);
+        if (wasClosed && isOpen && Date.now() - lastExplosion > 1000) {
+          explode();
+          lastExplosion = Date.now();
+        }
+        wasClosed = isClosed;
+      } else {
+        handInFrame = false;
+        fingerCount = 0;
+      }
+      document.getElementById('jCount').innerText = fingerCount;
     });
 
     new Camera(document.getElementById('video'), {
@@ -105,24 +73,14 @@
       width: 480, height: 360
     }).start();
 
-    function setMode(mode) {
-      currentMode = mode;
-      document.getElementById('modeName').innerText = mode;
-      document.querySelectorAll('button').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.innerText === mode || (btn.id === 'btnFollow' && mode === 'FOLLOW') || (btn.id === 'btnNumber' && mode === 'NUMBER')) {
-          btn.classList.add('active');
-        }
-      });
-    }
-
-    function triggerExplosion() {
+    function explode() {
       particles.forEach(p => {
-        p.vel.add(p5.Vector.random2D().mult(random(30, 60)));
-        p.tColor = color(random(255), random(255), 255);
+        p.vel.add(p5.Vector.random2D().mult(random(30, 50)));
+        p.tCol = color(random(255), 255, 255);
       });
     }
 
+    // --- P5.JS ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
       targetPos = createVector(width/2, height/2);
@@ -132,36 +90,36 @@
 
     function draw() {
       clear();
-      document.getElementById('fps').innerText = floor(frameRate());
-      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.2);
-      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.2);
+      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.15);
+      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.15);
 
+      let bText = "DRIFT";
       particles.forEach(p => {
-        let base = handInFrame ? smoothPos : createVector(width/2, height/2);
-        if (currentMode === 'LOVE') p.shapeHeart(base);
-        else if (currentMode === 'CIRCLE') p.shapeCircle(base);
-        else if (currentMode === 'TRIANGLE') p.shapeTriangle(base);
-        else if (currentMode === 'FOLLOW') p.seek(base);
-        else if (currentMode === 'NUMBER') p.shapeDigit(currentNumber, base);
-        else p.drift();
+        if (handInFrame) {
+          if (fingerCount === 1) { p.seek(smoothPos); bText = "POINT"; }
+          else if (fingerCount === 2) { p.shapeLove(smoothPos); bText = "LOVE"; }
+          else if (fingerCount === 3) { p.shapePoly(smoothPos, 3, 200); bText = "TRIANGLE"; }
+          else if (fingerCount === 4) { p.shapePoly(smoothPos, 4, 200); bText = "SQUARE"; }
+          else if (fingerCount === 5) { p.shapePoly(smoothPos, 50, 180); bText = "CIRCLE"; }
+          else { p.drift(); }
+        } else { p.drift(); }
         p.update();
         p.show();
       });
+      document.getElementById('bName').innerText = bText;
     }
 
     class Particle {
       constructor(i) {
         this.i = i;
         this.pos = createVector(random(width), random(height));
-        this.vel = p5.Vector.random2D();
+        this.vel = createVector();
         this.acc = createVector();
-        this.maxS = 16;
-        this.maxF = 0.8;
         this.clr = color(255);
-        this.tColor = null;
+        this.tCol = null;
       }
 
-      shapeHeart(c) {
+      shapeLove(c) {
         let a = map(this.i, 0, totalParticles, 0, TWO_PI);
         let x = c.x + 16 * 16 * pow(sin(a), 3);
         let y = c.y - (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a)) * 13;
@@ -169,69 +127,44 @@
         this.clr = color(255, 50, 150);
       }
 
-      shapeCircle(c) {
-        let a = map(this.i, 0, totalParticles, 0, TWO_PI);
-        this.seek(createVector(c.x + cos(a)*180, c.y + sin(a)*180));
-        this.clr = color(0, 255, 150);
+      shapePoly(c, sides, r) {
+        let angle = TWO_PI / sides;
+        let segment = floor(map(this.i, 0, totalParticles, 0, sides));
+        let pct = (this.i % (totalParticles/sides)) / (totalParticles/sides);
+        
+        let a1 = segment * angle - HALF_PI;
+        let a2 = (segment + 1) * angle - HALF_PI;
+        
+        let v1 = createVector(c.x + cos(a1)*r, c.y + sin(a1)*r);
+        let v2 = createVector(c.x + cos(a2)*r, c.y + sin(a2)*r);
+        
+        this.seek(p5.Vector.lerp(v1, v2, pct));
+        this.clr = (sides === 3) ? color(255, 255, 0) : (sides === 4) ? color(0, 255, 255) : color(0, 255, 100);
       }
 
-      shapeTriangle(c) {
-        let side = 400;
-        let h = side * (sqrt(3)/2);
-        let p1 = createVector(c.x, c.y - h/2);
-        let p2 = createVector(c.x - side/2, c.y + h/2);
-        let p3 = createVector(c.x + side/2, c.y + h/2);
-        let target;
-        let segment = floor(map(this.i, 0, totalParticles, 0, 3));
-        let pct = (this.i % (totalParticles/3)) / (totalParticles/3);
-        if(segment === 0) target = p5.Vector.lerp(p1, p2, pct);
-        else if(segment === 1) target = p5.Vector.lerp(p2, p3, pct);
-        else target = p5.Vector.lerp(p3, p1, pct);
-        this.seek(target);
-        this.clr = color(255, 255, 0);
-      }
-
-      shapeDigit(n, c) {
-        let pIdx = floor(this.i / (totalParticles / 15));
-        let r = floor(pIdx / 3); let cl = pIdx % 3;
-        const d = [[],[0,1,0,0,1,0,0,1,0,0,1,0,0,1,0],[1,1,1,0,0,1,1,1,1,1,0,0,1,1,1],[1,1,1,0,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,0,1,1,1,1,0,0,1,0,0,1],[1,1,1,1,0,0,1,1,1,0,0,1,1,1],[1,1,1,1,0,0,1,1,1,1,0,1,1,1],[1,1,1,0,0,1,0,0,1,0,0,1,0,0,1],[1,1,1,1,0,1,1,1,1,1,0,1,1,1],[1,1,1,1,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1]];
-        let g = d[n];
-        let t;
-        if (g && g[r * 3 + cl] === 1) {
-          t = createVector(c.x + (cl-1)*55 + (this.i%10-5), c.y + (r-2)*55 + (this.i%8-4));
-          this.clr = color(0, 255, 255);
-        } else {
-          let a = map(this.i, 0, totalParticles, 0, TWO_PI);
-          t = createVector(c.x + cos(a)*250, c.y + sin(a)*250);
-          this.clr = color(100, 100, 255, 50);
-        }
-        this.seek(t, 0.5);
-      }
-
-      seek(t, f) {
-        let desired = p5.Vector.sub(t, this.pos);
-        let m = desired.mag();
-        let s = (m < 100) ? map(m, 0, 100, 0, this.maxS) : this.maxS;
-        this.acc.add(p5.Vector.sub(desired.setMag(s), this.vel).limit(f || this.maxF));
+      seek(t) {
+        let d = p5.Vector.sub(t, this.pos);
+        let s = map(min(d.mag(), 100), 0, 100, 0, 18);
+        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(0.8));
       }
 
       drift() {
         this.acc.add(p5.Vector.random2D().mult(0.2));
-        this.clr = color(255, 255, 255, 100);
+        this.clr = color(200, 150);
       }
 
       update() {
-        this.vel.add(this.acc).limit(this.maxS);
+        this.vel.add(this.acc).limit(18);
         this.pos.add(this.vel);
         this.acc.mult(0);
         this.vel.mult(0.92);
       }
 
       show() {
-        stroke(this.tColor || this.clr);
+        stroke(this.tCol || this.clr);
         strokeWeight(random(3, 5));
         point(this.pos.x, this.pos.y);
-        this.tColor = null;
+        this.tCol = null;
       }
     }
   </script>
