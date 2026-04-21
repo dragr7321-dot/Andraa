@@ -1,79 +1,136 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hand Tracking Ke Bentuk</title>
+  <title>Magic Hand Particles</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
-    body { margin: 0; display: flex; justify-content: center; background: #111; }
-    .container { position: relative; width: 100%; max-width: 500px; }
-    #webcam { transform: rotateY(180deg); width: 100%; height: auto; display: none; }
-    #output_canvas { position: absolute; left: 0; top: 0; width: 100%; transform: rotateY(180deg); }
+    body { margin: 0; overflow: hidden; background: #000; }
+    canvas { display: block; }
+    #video { display: none; }
   </style>
 </head>
-
 <body>
-  <div class="container">
-    <video id="webcam" autoplay playsinline></video>
-    <canvas id="output_canvas"></canvas>
-  </div>
+  <video id="video" playsinline></video>
 
   <script>
-    const videoElement = document.getElementById('webcam');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
+    let handLandmarks = null;
+    let particles = [];
+    const numParticles = 800; // Jumlah butiran debu
+    let isSarangeo = false;
 
-    function onResults(results) {
-      // Atur ukuran canvas sesuai video
-      canvasElement.width = videoElement.videoWidth;
-      canvasElement.height = videoElement.videoHeight;
-
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      
-      // Gambar background transparan atau efek tertentu di sini
-      if (results.multiHandLandmarks) {
-        for (const landmarks of results.multiHandLandmarks) {
-          // Opsi 1: Gambar garis rangka tangan standar
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-          
-          // Opsi 2: Ubah titik jari menjadi bentuk lingkaran/bola
-          for(let point of landmarks) {
-            canvasCtx.beginPath();
-            canvasCtx.arc(point.x * canvasElement.width, point.y * canvasElement.height, 8, 0, 2 * Math.PI);
-            canvasCtx.fillStyle = "cyan";
-            canvasCtx.fill();
-          }
-        }
-      }
-      canvasCtx.restore();
-    }
-
+    // 1. Setup MediaPipe Hands
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
     hands.setOptions({
-      maxNumHands: 2,
+      maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
 
-    hands.onResults(onResults);
+    hands.onResults(results => {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        handLandmarks = results.multiHandLandmarks[0];
+        checkGesture(handLandmarks);
+      } else {
+        handLandmarks = null;
+      }
+    });
 
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({image: videoElement});
-      },
-      width: 1280,
-      height: 720
+    const camera = new Camera(document.getElementById('video'), {
+      onFrame: async () => { await hands.send({image: document.getElementById('video')}); },
+      width: 640, height: 480
     });
     camera.start();
+
+    // 2. Logika Deteksi Gesture (Sederhana)
+    function checkGesture(landmarks) {
+      // Deteksi Sarangeo sederhana (Ibu jari dan Telunjuk berdekatan)
+      let thumbTip = landmarks[4];
+      let indexTip = landmarks[8];
+      let dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+      
+      // Jika jarak ujung jempol dan telunjuk sangat dekat
+      isSarangeo = dist < 0.05;
+    }
+
+    // 3. Setup p5.js untuk Visual
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      for (let i = 0; i < numParticles; i++) {
+        particles.push(new Particle());
+      }
+    }
+
+    function draw() {
+      background(0, 50); // Efek trail (jejak)
+      
+      if (handLandmarks) {
+        let tx = (1 - handLandmarks[8].x) * width; // Balik mirror
+        let ty = handLandmarks[8].y * height;
+
+        particles.forEach(p => {
+          if (isSarangeo) {
+            p.followHeart(tx, ty); // Jika sarangeo, bentuk LOVE
+          } else {
+            p.followHand(tx, ty); // Jika biasa, ikuti telunjuk
+          }
+          p.update();
+          p.show();
+        });
+      }
+    }
+
+    class Particle {
+      constructor() {
+        this.pos = createVector(random(width), random(height));
+        this.vel = p5.Vector.random2D();
+        this.acc = createVector();
+        this.color = color(random(100, 255), random(100, 255), 255);
+      }
+
+      followHand(tx, ty) {
+        let target = createVector(tx, ty);
+        let force = p5.Vector.sub(target, this.pos);
+        force.setMag(0.5);
+        this.acc.add(force);
+      }
+
+      followHeart(tx, ty) {
+        // Persamaan Matematika Hati (Heart Shape)
+        let angle = random(TWO_PI);
+        let r = 10;
+        let hx = tx + r * 16 * pow(sin(angle), 3);
+        let hy = ty - r * (13 * cos(angle) - 5 * cos(2 * angle) - 2 * cos(3 * angle) - cos(4 * angle));
+        
+        let target = createVector(hx, hy);
+        let force = p5.Vector.sub(target, this.pos);
+        force.setMag(0.8);
+        this.acc.add(force);
+        this.color = color(255, 105, 180); // Ubah jadi pink
+      }
+
+      update() {
+        this.vel.add(this.acc);
+        this.vel.limit(5);
+        this.pos.add(this.vel);
+        this.acc.mult(0.9); // Friction
+      }
+
+      show() {
+        stroke(this.color);
+        strokeWeight(2);
+        point(this.pos.x, this.pos.y);
+      }
+    }
+
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
   </script>
 </body>
 </html>
