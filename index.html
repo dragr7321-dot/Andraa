@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Ultra-Responsive Magic</title>
+  <title>Magic Particles - Full Features</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
@@ -11,38 +11,42 @@
     body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
     #video { position: fixed; transform: scaleX(-1); opacity: 0.3; width: 100%; height: 100%; object-fit: cover; }
     canvas { position: absolute; top: 0; left: 0; z-index: 10; }
-    .debug {
-      position: absolute; top: 10px; right: 10px; color: #0f0; 
-      font-family: monospace; font-size: 10px; z-index: 20; text-align: right;
+    .hud {
+      position: absolute; top: 20px; left: 20px; color: #00ffff; 
+      font-family: 'Courier New', monospace; z-index: 20; pointer-events: none;
+      background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
     }
   </style>
 </head>
 <body>
-  <div class="debug">
-    FPS: <span id="fps">0</span><br>
-    MODE: <span id="mStatus">OFF</span><br>
-    COUNT: <span id="pCount">0</span>
+  <div class="hud">
+    <div>[ SYSTEM ACTIVE ]</div>
+    <div>FOLLOW: <span id="fStatus">OFF</span></div>
+    <div>MODE: <span id="mName">STAY</span></div>
+    <div>PARTICLES: <span id="pCount">0</span></div>
   </div>
   <video id="video" playsinline></video>
 
   <script>
     let particles = [];
     let isFollowActive = false;
+    let isSarangeo = false;
     let lastToggleTime = 0;
-    let rawTarget = { x: 0, y: 0 };
-    let smoothTarget = { x: 0, y: 0 };
+    let rawPos = { x: 0, y: 0 };
+    let smoothPos = { x: 0, y: 0 };
     let handInFrame = false;
+    const numParticles = 800;
 
-    // --- 1. OPTIMASI DETEKSI (MEDIA PIPE) ---
+    // --- MEDIAPIPE ---
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 0, // 0 lebih cepat untuk HP daripada 1
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      modelComplexity: 0,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
 
     hands.onResults(results => {
@@ -50,52 +54,59 @@
         handInFrame = true;
         const lm = results.multiHandLandmarks[0];
         
-        // Deteksi Thumbs Up (Jempol) untuk Toggle
+        // 1. Deteksi Jempol (👍) untuk Toggle ON/OFF
         let isThumbUp = lm[4].y < lm[3].y && lm[4].y < lm[2].y && lm[8].y > lm[6].y;
-        if (isThumbUp && Date.now() - lastToggleTime > 600) {
+        if (isThumbUp && Date.now() - lastToggleTime > 700) {
           isFollowActive = !isFollowActive;
           lastToggleTime = Date.now();
-          document.getElementById('mStatus').innerText = isFollowActive ? "FOLLOW" : "IDLE";
+          document.getElementById('fStatus').innerText = isFollowActive ? "ON" : "OFF";
         }
 
-        // Simpan koordinat mentah (Telunjuk)
-        rawTarget.x = (1 - lm[8].x) * width;
-        rawTarget.y = lm[8].y * height;
+        // 2. Deteksi Sarangeo (Jari Hati)
+        let d = dist(lm[4].x, lm[4].y, lm[8].x, lm[8].y);
+        isSarangeo = d < 0.07;
+        document.getElementById('mName').innerText = isSarangeo ? "HEART" : "FOLLOW";
+
+        // 3. Simpan koordinat Telunjuk
+        rawPos.x = (1 - lm[8].x) * width;
+        rawPos.y = lm[8].y * height;
       } else {
         handInFrame = false;
+        document.getElementById('mName').innerText = "STAY";
       }
     });
 
     const camera = new Camera(document.getElementById('video'), {
       onFrame: async () => { await hands.send({image: document.getElementById('video')}); },
-      width: 480, height: 360 // Resolusi lebih kecil = Respon lebih instan
+      width: 480, height: 360
     });
     camera.start();
 
-    // --- 2. OPTIMASI ANIMASI (P5.JS) ---
+    // --- P5.JS ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
-      // Gunakan jumlah partikel yang pas untuk HP agar FPS tidak drop
-      for (let i = 0; i < 600; i++) {
-        particles.push(new Particle());
+      for (let i = 0; i < numParticles; i++) {
+        particles.push(new Particle(i));
       }
       document.getElementById('pCount').innerText = particles.length;
-      frameRate(60); // Paksa ke 60 FPS
     }
 
     function draw() {
       clear();
-      document.getElementById('fps').innerText = floor(frameRate());
 
-      // LERP untuk "Smooth Target" (Menghilangkan getaran tangan)
-      smoothTarget.x = lerp(smoothTarget.x, rawTarget.x, 0.25);
-      smoothTarget.y = lerp(smoothTarget.y, rawTarget.y, 0.25);
+      // Lerp agar pergerakan mengikuti tangan sangat smooth
+      smoothPos.x = lerp(smoothPos.x, rawPos.x, 0.2);
+      smoothPos.y = lerp(smoothPos.y, rawPos.y, 0.2);
 
       particles.forEach(p => {
         if (isFollowActive && handInFrame) {
-          p.applyPhysics(smoothTarget.x, smoothTarget.y, true);
+          if (isSarangeo) {
+            p.followHeart(smoothPos.x, smoothPos.y);
+          } else {
+            p.followHand(smoothPos.x, smoothPos.y);
+          }
         } else {
-          p.applyPhysics(0, 0, false);
+          p.drift();
         }
         p.update();
         p.show();
@@ -103,47 +114,56 @@
     }
 
     class Particle {
-      constructor() {
+      constructor(i) {
+        this.index = i;
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
         this.acc = createVector();
-        this.maxSpeed = random(5, 12); // Speed ditingkatkan agar respon terasa cepat
-        this.maxForce = 0.8; 
-        this.noiseOffset = random(1000);
+        this.maxSpeed = random(6, 12);
+        this.maxForce = 0.5;
+        this.offset = p5.Vector.random2D().mult(random(10, 40));
+        this.color = color(255);
       }
 
-      applyPhysics(tx, ty, following) {
-        if (following) {
-          let target = createVector(tx, ty);
-          let steer = p5.Vector.sub(target, this.pos);
-          let d = steer.mag();
-          
-          // Arrive behavior yang lebih agresif
-          let speed = map(d, 0, 200, 0, this.maxSpeed);
-          steer.setMag(speed);
-          
-          let force = p5.Vector.sub(steer, this.vel);
-          force.limit(this.maxForce);
-          this.acc.add(force);
-        } else {
-          // Gerakan mengalir saat idle
-          let n = noise(this.noiseOffset + frameCount * 0.01);
-          let angle = map(n, 0, 1, 0, TWO_PI * 4);
-          this.acc.add(p5.Vector.fromAngle(angle).mult(0.1));
-        }
+      followHand(tx, ty) {
+        let t = p5.Vector.add(createVector(tx, ty), this.offset);
+        this.seek(t);
+        this.color = color(0, 255, 255);
+      }
+
+      followHeart(tx, ty) {
+        let a = map(this.index, 0, numParticles, 0, TWO_PI);
+        let r = 13;
+        let hx = tx + r * (16 * pow(sin(a), 3));
+        let hy = ty - r * (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a));
+        this.seek(createVector(hx, hy));
+        this.color = color(255, 50, 150);
+      }
+
+      seek(target) {
+        let desired = p5.Vector.sub(target, this.pos);
+        let d = desired.mag();
+        let s = (d < 100) ? map(d, 0, 100, 0, this.maxSpeed) : this.maxSpeed;
+        desired.setMag(s);
+        let steer = p5.Vector.sub(desired, this.vel);
+        this.acc.add(steer.limit(this.maxForce));
+      }
+
+      drift() {
+        this.acc.add(p5.Vector.random2D().mult(0.1));
+        this.color = color(200);
       }
 
       update() {
-        this.vel.add(this.acc);
-        this.vel.limit(this.maxSpeed);
+        this.vel.add(this.acc).limit(this.maxSpeed);
         this.pos.add(this.vel);
         this.acc.mult(0);
-        this.vel.mult(0.95); // Friction
+        this.vel.mult(0.96);
       }
 
       show() {
-        stroke(0, 255, 255, 180);
-        strokeWeight(3);
+        stroke(this.color);
+        strokeWeight(random(2, 5));
         point(this.pos.x, this.pos.y);
       }
     }
