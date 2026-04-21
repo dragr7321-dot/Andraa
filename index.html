@@ -2,197 +2,149 @@
 <html lang="id">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Omni-Shape Magic with Camera</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Ultra-Responsive Magic</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background: #000; }
-    /* Video tetap ada tapi kita buat transparan/samar agar partikel lebih terlihat */
-    #video { 
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform: scaleX(-1); /* Mirroring video */
-      opacity: 0.6; /* Atur angka ini (0.1 - 1.0) untuk kejelasan kamera */
-    }
-    canvas { 
-      position: absolute; 
-      top: 0; 
-      left: 0; 
-      z-index: 10; 
-    }
-    .ui {
-      position: absolute; top: 20px; left: 20px; color: cyan;
-      font-family: sans-serif; z-index: 20; pointer-events: none;
-      text-shadow: 2px 2px 4px #000;
+    body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
+    #video { position: fixed; transform: scaleX(-1); opacity: 0.3; width: 100%; height: 100%; object-fit: cover; }
+    canvas { position: absolute; top: 0; left: 0; z-index: 10; }
+    .debug {
+      position: absolute; top: 10px; right: 10px; color: #0f0; 
+      font-family: monospace; font-size: 10px; z-index: 20; text-align: right;
     }
   </style>
 </head>
 <body>
-  <div class="ui">Mode: <span id="modeName">Follow</span></div>
+  <div class="debug">
+    FPS: <span id="fps">0</span><br>
+    MODE: <span id="mStatus">OFF</span><br>
+    COUNT: <span id="pCount">0</span>
+  </div>
   <video id="video" playsinline></video>
 
   <script>
     let particles = [];
-    let handLandmarks = null;
-    let lerpX = 0, lerpY = 0;
-    let currentMode = 0; 
-    const numParticles = 800;
+    let isFollowActive = false;
+    let lastToggleTime = 0;
+    let rawTarget = { x: 0, y: 0 };
+    let smoothTarget = { x: 0, y: 0 };
+    let handInFrame = false;
 
-    // --- MEDIAPIPE SETUP ---
+    // --- 1. OPTIMASI DETEKSI (MEDIA PIPE) ---
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      modelComplexity: 0, // 0 lebih cepat untuk HP daripada 1
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
     hands.onResults(results => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        handLandmarks = results.multiHandLandmarks[0];
+        handInFrame = true;
+        const lm = results.multiHandLandmarks[0];
         
-        let d = dist(handLandmarks[4].x, handLandmarks[4].y, handLandmarks[8].x, handLandmarks[8].y);
-        if (d < 0.06) {
-            if (currentMode !== 1) setMode(1);
-        } else if (currentMode === 1) {
-            setMode(0);
+        // Deteksi Thumbs Up (Jempol) untuk Toggle
+        let isThumbUp = lm[4].y < lm[3].y && lm[4].y < lm[2].y && lm[8].y > lm[6].y;
+        if (isThumbUp && Date.now() - lastToggleTime > 600) {
+          isFollowActive = !isFollowActive;
+          lastToggleTime = Date.now();
+          document.getElementById('mStatus').innerText = isFollowActive ? "FOLLOW" : "IDLE";
         }
+
+        // Simpan koordinat mentah (Telunjuk)
+        rawTarget.x = (1 - lm[8].x) * width;
+        rawTarget.y = lm[8].y * height;
       } else {
-        handLandmarks = null;
+        handInFrame = false;
       }
     });
 
     const camera = new Camera(document.getElementById('video'), {
       onFrame: async () => { await hands.send({image: document.getElementById('video')}); },
-      width: 640, height: 480
+      width: 480, height: 360 // Resolusi lebih kecil = Respon lebih instan
     });
     camera.start();
 
-    // --- P5.JS ENGINE ---
+    // --- 2. OPTIMASI ANIMASI (P5.JS) ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
-      for (let i = 0; i < numParticles; i++) {
-        particles.push(new Particle(i));
+      // Gunakan jumlah partikel yang pas untuk HP agar FPS tidak drop
+      for (let i = 0; i < 600; i++) {
+        particles.push(new Particle());
       }
+      document.getElementById('pCount').innerText = particles.length;
+      frameRate(60); // Paksa ke 60 FPS
     }
 
     function draw() {
-      // Kita hapus canvas setiap frame agar video di bawahnya terlihat jelas
-      clear(); 
+      clear();
+      document.getElementById('fps').innerText = floor(frameRate());
 
-      if (handLandmarks) {
-        let targetX = (1 - handLandmarks[8].x) * width;
-        let targetY = handLandmarks[8].y * height;
-        lerpX = lerp(lerpX, targetX, 0.2);
-        lerpY = lerp(lerpY, targetY, 0.2);
+      // LERP untuk "Smooth Target" (Menghilangkan getaran tangan)
+      smoothTarget.x = lerp(smoothTarget.x, rawTarget.x, 0.25);
+      smoothTarget.y = lerp(smoothTarget.y, rawTarget.y, 0.25);
 
-        particles.forEach(p => {
-          p.behaviors(lerpX, lerpY);
-          p.update();
-          p.show();
-        });
-      } else {
-        particles.forEach(p => {
-          p.wander();
-          p.update();
-          p.show();
-        });
-      }
-    }
-
-    function setMode(m) {
-        currentMode = m;
-        let names = ["Follow", "Heart", "Square", "Circle"];
-        document.getElementById('modeName').innerText = names[m];
-    }
-
-    function mousePressed() {
-        currentMode = (currentMode + 1) % 4;
-        setMode(currentMode);
+      particles.forEach(p => {
+        if (isFollowActive && handInFrame) {
+          p.applyPhysics(smoothTarget.x, smoothTarget.y, true);
+        } else {
+          p.applyPhysics(0, 0, false);
+        }
+        p.update();
+        p.show();
+      });
     }
 
     class Particle {
-      constructor(index) {
-        this.index = index;
+      constructor() {
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
-        this.acc = createVector(0, 0);
-        this.maxSpeed = 10;
-        this.maxForce = 0.6;
-        this.color = color(255);
+        this.acc = createVector();
+        this.maxSpeed = random(5, 12); // Speed ditingkatkan agar respon terasa cepat
+        this.maxForce = 0.8; 
+        this.noiseOffset = random(1000);
       }
 
-      behaviors(tx, ty) {
-        let target;
-        if (currentMode === 1) {
-            target = this.getHeartTarget(tx, ty);
-            this.color = color(255, 50, 150);
-        } else if (currentMode === 2) {
-            target = this.getSquareTarget(tx, ty);
-            this.color = color(50, 255, 150);
-        } else if (currentMode === 3) {
-            target = this.getCircleTarget(tx, ty);
-            this.color = color(50, 200, 255);
+      applyPhysics(tx, ty, following) {
+        if (following) {
+          let target = createVector(tx, ty);
+          let steer = p5.Vector.sub(target, this.pos);
+          let d = steer.mag();
+          
+          // Arrive behavior yang lebih agresif
+          let speed = map(d, 0, 200, 0, this.maxSpeed);
+          steer.setMag(speed);
+          
+          let force = p5.Vector.sub(steer, this.vel);
+          force.limit(this.maxForce);
+          this.acc.add(force);
         } else {
-            target = createVector(tx, ty);
-            this.color = color(255, 255, 255);
+          // Gerakan mengalir saat idle
+          let n = noise(this.noiseOffset + frameCount * 0.01);
+          let angle = map(n, 0, 1, 0, TWO_PI * 4);
+          this.acc.add(p5.Vector.fromAngle(angle).mult(0.1));
         }
-
-        let steer = this.arrive(target);
-        this.acc.add(steer);
-      }
-
-      getHeartTarget(tx, ty) {
-        let angle = map(this.index, 0, numParticles, 0, TWO_PI);
-        let r = 14;
-        let x = tx + r * 16 * pow(sin(angle), 3);
-        let y = ty - r * (13 * cos(angle) - 5 * cos(2 * angle) - 2 * cos(3 * angle) - cos(4 * angle));
-        return createVector(x, y);
-      }
-
-      getSquareTarget(tx, ty) {
-        let s = 300; let p = numParticles/4; let i = this.index;
-        if (i < p) return createVector(tx - s/2 + (i/p)*s, ty - s/2);
-        if (i < p*2) return createVector(tx + s/2, ty - s/2 + ((i-p)/p)*s);
-        if (i < p*3) return createVector(tx + s/2 - ((i-p*2)/p)*s, ty + s/2);
-        return createVector(tx - s/2, ty + s/2 - ((i-p*3)/p)*s);
-      }
-
-      getCircleTarget(tx, ty) {
-        let angle = map(this.index, 0, numParticles, 0, TWO_PI);
-        return createVector(tx + cos(angle)*180, ty + sin(angle)*180);
-      }
-
-      arrive(target) {
-        let d = p5.Vector.sub(target, this.pos);
-        let speed = (d.mag() < 100) ? map(d.mag(), 0, 100, 0, this.maxSpeed) : this.maxSpeed;
-        return p5.Vector.sub(d.setMag(speed), this.vel).limit(this.maxForce);
       }
 
       update() {
-        this.vel.add(this.acc).limit(this.maxSpeed);
+        this.vel.add(this.acc);
+        this.vel.limit(this.maxSpeed);
         this.pos.add(this.vel);
         this.acc.mult(0);
-        this.vel.mult(0.96);
+        this.vel.mult(0.95); // Friction
       }
 
       show() {
-        stroke(this.color);
-        strokeWeight(4);
+        stroke(0, 255, 255, 180);
+        strokeWeight(3);
         point(this.pos.x, this.pos.y);
-      }
-
-      wander() {
-        this.acc.add(p5.Vector.random2D().mult(0.3));
       }
     }
 
