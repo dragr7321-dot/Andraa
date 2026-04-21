@@ -3,27 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Magic Particles - Finger Counting</title>
+  <title>Magic Particles - Ultra Smooth Final</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
   <style>
-    body { margin: 0; overflow: hidden; background: #000; }
+    body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
     #video { position: fixed; transform: scaleX(-1); opacity: 0.3; width: 100%; height: 100%; object-fit: cover; }
     canvas { position: absolute; top: 0; left: 0; z-index: 10; }
     .hud {
       position: absolute; top: 20px; left: 20px; z-index: 20;
-      color: #0ff; font-family: monospace; background: rgba(0, 40, 40, 0.6);
-      padding: 15px; border-radius: 8px; pointer-events: none;
+      color: #0ff; font-family: 'Courier New', monospace; font-size: 13px;
+      background: rgba(0, 30, 30, 0.6); padding: 15px; border-left: 4px solid #0ff;
+      pointer-events: none; text-shadow: 0 0 5px #0ff;
     }
-    #digit-display { font-size: 24px; font-weight: bold; color: #fff; }
   </style>
 </head>
 <body>
   <div class="hud">
-    <div>>> GESTURE_OS v2.0</div>
-    <div>DETECTED_NUM: <span id="digit-display">0</span></div>
-    <div>FOLLOW_MODE: <span id="fStatus">OFF</span></div>
+    <div>>> MAGIC_SYSTEM_v3.0_FINAL</div>
+    <div>GESTURE: <span id="gStatus">IDLE</span></div>
+    <div>NUMBER : <span id="nStatus">0</span></div>
+    <div>FOLLOW : <span id="fStatus">OFF</span></div>
+    <div>FPS    : <span id="fpsStatus">0</span></div>
   </div>
   <video id="video" playsinline></video>
 
@@ -31,45 +33,65 @@
     let particles = [];
     let isFollowActive = false;
     let lastToggleTime = 0;
+    let lastExplosionTime = 0;
+    let wasClosed = false;
+    let currentGesture = "IDLE";
     let currentNumber = 0;
     let targetPos, smoothPos;
     let handInFrame = false;
-    const totalParticles = 1000;
+    const totalParticles = 1200;
 
-    // --- LOGIKA HITUNG JARI (1-10) ---
+    // --- 1. MEDIAPIPE LOGIC (SANGAT CEPAT) ---
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.7 });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
     hands.onResults(results => {
-      let count = 0;
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        handInFrame = true;
+      let fingerCount = 0;
+      handInFrame = (results.multiHandLandmarks && results.multiHandLandmarks.length > 0);
+      currentGesture = "IDLE";
+
+      if (handInFrame) {
         results.multiHandLandmarks.forEach((lm, index) => {
-          // Cek 4 jari (Telunjuk, Tengah, Manis, Kelingking)
-          if (lm[8].y < lm[6].y) count++;
-          if (lm[12].y < lm[10].y) count++;
-          if (lm[16].y < lm[14].y) count++;
-          if (lm[20].y < lm[18].y) count++;
-          // Cek Jempol (berbeda sumbu x karena menyamping)
-          let isRightHand = results.multiHandedness[index].label === 'Right';
-          if (isRightHand ? lm[4].x < lm[3].x : lm[4].x > lm[3].x) count++;
-          
-          // Toggle Follow dengan Jempol 👍 jika hanya 1 jari (jempol) yang naik
-          if (count === 1 && lm[4].y < lm[3].y && Date.now() - lastToggleTime > 800) {
+          // Hitung jari naik
+          if (lm[8].y < lm[6].y) fingerCount++;
+          if (lm[12].y < lm[10].y) fingerCount++;
+          if (lm[16].y < lm[14].y) fingerCount++;
+          if (lm[20].y < lm[18].y) fingerCount++;
+          let isRight = results.multiHandedness[index].label === 'Right';
+          if (isRight ? lm[4].x < lm[3].x : lm[4].x > lm[3].x) fingerCount++;
+
+          // Jempol (👍) Toggle
+          let thumbOnly = (lm[4].y < lm[3].y && lm[8].y > lm[6].y && lm[12].y > lm[10].y);
+          if (thumbOnly && Date.now() - lastToggleTime > 800) {
             isFollowActive = !isFollowActive;
             lastToggleTime = Date.now();
             document.getElementById('fStatus').innerText = isFollowActive ? "ON" : "OFF";
           }
+
+          // Sarangeo
+          let dTI = dist(lm[4].x, lm[4].y, lm[8].x, lm[8].y);
+          if (dTI < 0.06 && lm[12].y > lm[10].y) currentGesture = "LOVE";
+
+          // Mengepal & Ledakan
+          let isClosed = (lm[8].y > lm[6].y && lm[12].y > lm[10].y && lm[16].y > lm[14].y);
+          let isOpen = (lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y < lm[14].y);
           
-          // Koordinat follow tetap di telunjuk tangan pertama
+          if (isClosed && currentGesture !== "LOVE") currentGesture = "CLOSED";
+          if (wasClosed && isOpen && Date.now() - lastExplosionTime > 1000) {
+            triggerExplosion();
+            lastExplosionTime = Date.now();
+          }
+          if (index === 0) wasClosed = isClosed;
           if (index === 0) targetPos.set((1 - lm[8].x) * width, lm[8].y * height);
         });
-        currentNumber = count;
+        currentNumber = fingerCount;
+        if (currentGesture === "IDLE" && currentNumber > 0) currentGesture = "NUMBER";
       } else {
-        handInFrame = false;
         currentNumber = 0;
+        currentGesture = "LOST";
       }
-      document.getElementById('digit-display').innerText = currentNumber;
+      document.getElementById('gStatus').innerText = currentGesture;
+      document.getElementById('nStatus').innerText = currentNumber;
     });
 
     new Camera(document.getElementById('video'), {
@@ -77,7 +99,7 @@
       width: 480, height: 360
     }).start();
 
-    // --- P5.JS VISUAL ---
+    // --- 2. P5.JS VISUAL ENGINE ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
       targetPos = createVector(width/2, height/2);
@@ -87,88 +109,107 @@
 
     function draw() {
       clear();
-      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.15);
-      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.15);
+      document.getElementById('fpsStatus').innerText = floor(frameRate());
+      
+      // Interpolasi agar gerakan tidak patah
+      smoothPos.x = lerp(smoothPos.x, targetPos.x, 0.2);
+      smoothPos.y = lerp(smoothPos.y, targetPos.y, 0.2);
+
+      let base = isFollowActive ? smoothPos : createVector(width/2, height/2);
 
       particles.forEach(p => {
-        if (currentNumber > 0) {
-            // Jika ada angka terdeteksi, bentuk angka di tengah atau ikuti tangan
-            let basePos = isFollowActive ? smoothPos : createVector(width/2, height/2);
-            p.formDigit(currentNumber, basePos);
-        } else {
-            p.drift();
-        }
+        if (handInFrame) {
+          if (currentGesture === "LOVE") p.shapeHeart(base);
+          else if (currentGesture === "CLOSED") p.shapeCircle(base);
+          else if (currentGesture === "NUMBER") p.shapeDigit(currentNumber, base);
+          else p.drift();
+        } else { p.drift(); }
         p.update();
         p.show();
       });
     }
 
+    function triggerExplosion() {
+      particles.forEach(p => {
+        p.vel.add(p5.Vector.random2D().mult(random(25, 45)));
+        p.tColor = color(random(255), random(255), 255);
+      });
+    }
+
     class Particle {
       constructor(i) {
-        this.index = i;
+        this.i = i;
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
         this.acc = createVector();
-        this.maxSpeed = 12;
-        this.maxForce = 0.8;
+        this.maxS = random(8, 15);
+        this.maxF = 0.8;
+        this.clr = color(255);
+        this.tColor = null;
+        this.off = p5.Vector.random2D().mult(random(5, 25));
       }
 
-      formDigit(num, center) {
-        // Logika sederhana pembentukan angka (Grid 3x5)
-        let row = floor(map(this.index, 0, totalParticles, 0, 5));
-        let col = floor(map(this.index % (totalParticles/5), 0, totalParticles/5, 0, 3));
-        
-        // Map angka ke grid sederhana (0 = kosong, 1 = isi)
-        const digits = [
-          [], // 0
-          [0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0], // 1
-          [1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1], // 2
-          [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1], // 3
-          [1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1], // 4
-          [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1], // 5
-          [1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1], // 6
-          [1,1,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1], // 7
-          [1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1], // 8
-          [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1], // 9
-          [1,0,1,1, 1,0,1,1, 1,0,1,1, 1,0,1,1, 1,0,1,1] // 10 (Simplified)
-        ];
+      shapeHeart(c) {
+        let a = map(this.i, 0, totalParticles, 0, TWO_PI);
+        let r = 16;
+        let x = c.x + r * (16 * pow(sin(a), 3));
+        let y = c.y - r * (13 * cos(a) - 5 * cos(2*a) - 2 * cos(3*a) - cos(4*a));
+        this.seek(createVector(x, y));
+        this.clr = color(255, 100, 150);
+      }
 
+      shapeCircle(c) {
+        let a = map(this.i, 0, totalParticles, 0, TWO_PI);
+        this.seek(createVector(c.x + cos(a)*180, c.y + sin(a)*180));
+        this.clr = color(100, 255, 150);
+      }
+
+      shapeDigit(n, c) {
+        let pIndex = floor(this.i / (totalParticles / 15));
+        let r = floor(pIndex / 3);
+        let cl = pIndex % 3;
+        const d = [[],[0,1,0,0,1,0,0,1,0,0,1,0,0,1,0],[1,1,1,0,0,1,1,1,1,1,0,0,1,1,1],[1,1,1,0,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,0,1,1,1,1,0,0,1,0,0,1],[1,1,1,1,0,0,1,1,1,0,0,1,1,1],[1,1,1,1,0,0,1,1,1,1,0,1,1,1],[1,1,1,0,0,1,0,0,1,0,0,1,0,0,1],[1,1,1,1,0,1,1,1,1,1,0,1,1,1],[1,1,1,1,0,1,1,1,1,0,0,1,1,1],[1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1,1]];
+        let g = d[n];
         let target;
-        let grid = digits[num];
-        if (grid && grid[row * 3 + col] === 1) {
-          let spacing = 40;
-          target = createVector(center.x + (col - 1) * spacing, center.y + (row - 2) * spacing);
+        if (g && g[r * 3 + cl] === 1) {
+          let s = 50;
+          target = createVector(c.x + (cl-1)*s + (this.i%10-5), c.y + (r-2)*s + (this.i%8-4));
+          this.clr = color(0, 255, 255);
         } else {
-          // Partikel yang tidak terpakai membentuk lingkaran di luar angka
-          let a = map(this.index, 0, totalParticles, 0, TWO_PI);
-          target = createVector(center.x + cos(a) * 150, center.y + sin(a) * 150);
+          let a = map(this.i, 0, totalParticles, 0, TWO_PI);
+          target = createVector(c.x + cos(a)*220, c.y + sin(a)*220);
+          this.clr = color(50, 100, 150, 150);
         }
-        this.seek(target);
+        this.seek(target, 0.45); // Force lebih rendah untuk angka agar smooth
       }
 
-      seek(t) {
+      seek(t, f) {
         let d = p5.Vector.sub(t, this.pos);
-        let s = map(min(d.mag(), 100), 0, 100, 0, this.maxSpeed);
-        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(this.maxForce));
+        let m = d.mag();
+        let s = (m < 150) ? map(m, 0, 150, 0, this.maxS) : this.maxS;
+        this.acc.add(p5.Vector.sub(d.setMag(s), this.vel).limit(f || this.maxF));
       }
 
       drift() {
         this.acc.add(p5.Vector.random2D().mult(0.2));
+        this.clr = color(180, 180, 180, 150);
       }
 
       update() {
-        this.vel.add(this.acc).limit(this.maxSpeed);
+        this.vel.add(this.acc);
         this.pos.add(this.vel);
         this.acc.mult(0);
-        this.vel.mult(0.92);
+        this.vel.mult(0.93);
       }
 
       show() {
-        stroke(0, 255, 255, 200);
-        strokeWeight(4);
+        stroke(this.tColor || this.clr);
+        strokeWeight(random(3, 5));
         point(this.pos.x, this.pos.y);
+        this.tColor = null;
       }
     }
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
   </script>
 </body>
 </html>
