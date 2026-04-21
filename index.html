@@ -3,34 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Magic Hand - Particle Control</title>
-  
+  <title>Omni-Shape Magic with Camera</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
-
   <style>
-    body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-    #video { display: none; } /* Sembunyikan video asli */
-    .info { 
-      position: absolute; bottom: 20px; width: 100%; text-align: center; 
-      color: rgba(255,255,255,0.5); font-size: 12px; pointer-events: none;
+    body { margin: 0; overflow: hidden; background: #000; }
+    /* Video tetap ada tapi kita buat transparan/samar agar partikel lebih terlihat */
+    #video { 
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* Mirroring video */
+      opacity: 0.6; /* Atur angka ini (0.1 - 1.0) untuk kejelasan kamera */
+    }
+    canvas { 
+      position: absolute; 
+      top: 0; 
+      left: 0; 
+      z-index: 10; 
+    }
+    .ui {
+      position: absolute; top: 20px; left: 20px; color: cyan;
+      font-family: sans-serif; z-index: 20; pointer-events: none;
+      text-shadow: 2px 2px 4px #000;
     }
   </style>
 </head>
 <body>
-
+  <div class="ui">Mode: <span id="modeName">Follow</span></div>
   <video id="video" playsinline></video>
-  <div class="info">Dekatkan telunjuk & jempol untuk Love | Jentikkan untuk Ledakan</div>
 
   <script>
-    let handLandmarks = null;
     let particles = [];
-    const numParticles = 600; 
-    let isSarangeo = false;
-    let prevDist = 1;
+    let handLandmarks = null;
+    let lerpX = 0, lerpY = 0;
+    let currentMode = 0; 
+    const numParticles = 800;
 
-    // --- 1. SETUP MEDIAPIPE HANDS ---
+    // --- MEDIAPIPE SETUP ---
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -38,14 +52,20 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.8,
-      minTrackingConfidence: 0.8
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
     });
 
     hands.onResults(results => {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         handLandmarks = results.multiHandLandmarks[0];
-        detectGestures(handLandmarks);
+        
+        let d = dist(handLandmarks[4].x, handLandmarks[4].y, handLandmarks[8].x, handLandmarks[8].y);
+        if (d < 0.06) {
+            if (currentMode !== 1) setMode(1);
+        } else if (currentMode === 1) {
+            setMode(0);
+        }
       } else {
         handLandmarks = null;
       }
@@ -57,124 +77,126 @@
     });
     camera.start();
 
-    // --- 2. LOGIKA GESTURE (LOVE & LEDAKAN) ---
-    function detectGestures(lm) {
-      let thumbTip = lm[4];
-      let indexTip = lm[8];
-      let dist = dist3D(thumbTip, indexTip);
-
-      // Cek Sarangeo (Jarak sangat dekat)
-      isSarangeo = dist < 0.04;
-
-      // Cek Jentikan (Perubahan jarak mendadak dari rapat ke terbuka)
-      if (prevDist < 0.04 && dist > 0.1) {
-        explodeParticles((1 - indexTip.x) * width, indexTip.y * height);
-      }
-      prevDist = dist;
-    }
-
-    function dist3D(p1, p2) {
-      return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
-    }
-
-    function explodeParticles(x, y) {
-      particles.forEach(p => {
-        let force = p5.Vector.random2D();
-        force.mult(random(10, 20));
-        p.acc.add(force);
-        p.color = color(random(255), random(255), random(255)); // Warna-warni ledakan
-      });
-    }
-
-    // --- 3. P5.JS VISUAL ENGINE ---
+    // --- P5.JS ENGINE ---
     function setup() {
       createCanvas(windowWidth, windowHeight);
       for (let i = 0; i < numParticles; i++) {
-        particles.push(new Particle());
+        particles.push(new Particle(i));
       }
     }
 
     function draw() {
-      background(0, 40); // Trail effect
-      
+      // Kita hapus canvas setiap frame agar video di bawahnya terlihat jelas
+      clear(); 
+
       if (handLandmarks) {
-        let tx = (1 - handLandmarks[8].x) * width; // Mirroring
-        let ty = handLandmarks[8].y * height;
+        let targetX = (1 - handLandmarks[8].x) * width;
+        let targetY = handLandmarks[8].y * height;
+        lerpX = lerp(lerpX, targetX, 0.2);
+        lerpY = lerp(lerpY, targetY, 0.2);
 
         particles.forEach(p => {
-          if (isSarangeo) {
-            p.followHeart(tx, ty);
-          } else {
-            p.followHand(tx, ty);
-          }
+          p.behaviors(lerpX, lerpY);
           p.update();
           p.show();
         });
       } else {
-        // Jika tangan hilang, partikel melayang acak
         particles.forEach(p => {
+          p.wander();
           p.update();
           p.show();
         });
       }
     }
 
+    function setMode(m) {
+        currentMode = m;
+        let names = ["Follow", "Heart", "Square", "Circle"];
+        document.getElementById('modeName').innerText = names[m];
+    }
+
+    function mousePressed() {
+        currentMode = (currentMode + 1) % 4;
+        setMode(currentMode);
+    }
+
     class Particle {
-      constructor() {
+      constructor(index) {
+        this.index = index;
         this.pos = createVector(random(width), random(height));
         this.vel = p5.Vector.random2D();
-        this.acc = createVector();
-        this.color = color(200, 230, 255);
-        this.maxSpeed = random(3, 7);
+        this.acc = createVector(0, 0);
+        this.maxSpeed = 10;
+        this.maxForce = 0.6;
+        this.color = color(255);
       }
 
-      followHand(tx, ty) {
-        let target = createVector(tx, ty);
-        let force = p5.Vector.sub(target, this.pos);
-        let d = force.mag();
-        if (d < 100) {
-          force.setMag(-1); // Efek menolak sedikit jika terlalu dekat
+      behaviors(tx, ty) {
+        let target;
+        if (currentMode === 1) {
+            target = this.getHeartTarget(tx, ty);
+            this.color = color(255, 50, 150);
+        } else if (currentMode === 2) {
+            target = this.getSquareTarget(tx, ty);
+            this.color = color(50, 255, 150);
+        } else if (currentMode === 3) {
+            target = this.getCircleTarget(tx, ty);
+            this.color = color(50, 200, 255);
         } else {
-          force.setMag(0.6);
+            target = createVector(tx, ty);
+            this.color = color(255, 255, 255);
         }
-        this.acc.add(force);
-        this.color = color(150, 200, 255);
+
+        let steer = this.arrive(target);
+        this.acc.add(steer);
       }
 
-      followHeart(tx, ty) {
-        let angle = random(TWO_PI);
-        let r = 12; // Ukuran hati
-        let hx = tx + r * 16 * pow(sin(angle), 3);
-        let hy = ty - r * (13 * cos(angle) - 5 * cos(2 * angle) - 2 * cos(3 * angle) - cos(4 * angle));
-        
-        let target = createVector(hx, hy);
-        let force = p5.Vector.sub(target, this.pos);
-        force.setMag(1.2);
-        this.acc.add(force);
-        this.color = color(255, 50, 150); // Pink terang
+      getHeartTarget(tx, ty) {
+        let angle = map(this.index, 0, numParticles, 0, TWO_PI);
+        let r = 14;
+        let x = tx + r * 16 * pow(sin(angle), 3);
+        let y = ty - r * (13 * cos(angle) - 5 * cos(2 * angle) - 2 * cos(3 * angle) - cos(4 * angle));
+        return createVector(x, y);
+      }
+
+      getSquareTarget(tx, ty) {
+        let s = 300; let p = numParticles/4; let i = this.index;
+        if (i < p) return createVector(tx - s/2 + (i/p)*s, ty - s/2);
+        if (i < p*2) return createVector(tx + s/2, ty - s/2 + ((i-p)/p)*s);
+        if (i < p*3) return createVector(tx + s/2 - ((i-p*2)/p)*s, ty + s/2);
+        return createVector(tx - s/2, ty + s/2 - ((i-p*3)/p)*s);
+      }
+
+      getCircleTarget(tx, ty) {
+        let angle = map(this.index, 0, numParticles, 0, TWO_PI);
+        return createVector(tx + cos(angle)*180, ty + sin(angle)*180);
+      }
+
+      arrive(target) {
+        let d = p5.Vector.sub(target, this.pos);
+        let speed = (d.mag() < 100) ? map(d.mag(), 0, 100, 0, this.maxSpeed) : this.maxSpeed;
+        return p5.Vector.sub(d.setMag(speed), this.vel).limit(this.maxForce);
       }
 
       update() {
-        this.vel.add(this.acc);
-        this.vel.limit(this.maxSpeed);
+        this.vel.add(this.acc).limit(this.maxSpeed);
         this.pos.add(this.vel);
-        this.acc.mult(0.9);
-        
-        // Bounce off walls
-        if (this.pos.x < 0 || this.pos.x > width) this.vel.x *= -1;
-        if (this.pos.y < 0 || this.pos.y > height) this.vel.y *= -1;
+        this.acc.mult(0);
+        this.vel.mult(0.96);
       }
 
       show() {
         stroke(this.color);
-        strokeWeight(random(1, 4));
+        strokeWeight(4);
         point(this.pos.x, this.pos.y);
+      }
+
+      wander() {
+        this.acc.add(p5.Vector.random2D().mult(0.3));
       }
     }
 
-    function windowResized() {
-      resizeCanvas(windowWidth, windowHeight);
-    }
+    function windowResized() { resizeCanvas(windowWidth, windowHeight); }
   </script>
 </body>
 </html>
